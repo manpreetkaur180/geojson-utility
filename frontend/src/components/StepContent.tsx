@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from "react";
+import * as EventSource from "eventsource";
+import { useEffect, useState } from "react";
 import { Button, Upload, Progress, message, Typography, Spin } from "antd";
 import {
   DownloadOutlined,
@@ -28,15 +29,26 @@ const StepContent: React.FC<StepContentProps> = ({
   onSignInClick,
   setCurrentStep,
 }) => {
-  const { isAuthenticated, token, logout } = useAuth();
+  const { isAuthenticated, token, logout, user } = useAuth();
   const [uploadProgress, setUploadProgress] = useState(0);
   const [fileList, setFileList] = useState<UploadFile[]>([]);
   const [uploading, setUploading] = useState(false);
   const [next, setNext] = useState(false);
   const [result, setResult] = useState("");
   const [id, setId] = useState(null);
-  let interval: NodeJS.Timeout;
+  const [file, setFile] = useState<File | null>(null);
 
+  async function hashToken(token: string): Promise<string> {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(token);
+    const hashBuffer = await crypto.subtle.digest("SHA-256", data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer)); // convert buffer to byte array
+    const hashHex = hashArray
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    return hashHex;
+  }
   const apiUrl = import.meta.env.VITE_API_BASE_URL;
   useEffect(() => {
     setNext(false);
@@ -44,39 +56,75 @@ const StepContent: React.FC<StepContentProps> = ({
     setFileList([]);
   }, []);
 
-  const onNextClick = () => {
-    setCurrentStep(3);
-    test(id);
-  };
-  const handleDownloadCSV = async () => {
-    try {
-      const response = await axios.get(`${apiUrl}/catchment/sample-csv`, {
-        responseType: "blob",
-      });
+  useEffect(() => {
+    if (!token || !id) return;
+    const setupEventSource = async () => {
+      const hashedToken = await hashToken(token);
 
-      const url = window.URL.createObjectURL(new Blob([response.data]));
-      const link = document.createElement("a");
-      link.href = url;
-      link.setAttribute("download", "sample.csv"); // optional custom name
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
+      if (id) {
+        const eventSource = new EventSource.EventSource(
+          `${apiUrl}/catchment/csv-status-stream/${id}?hashed_token=${hashedToken}&username=${user.name}`
+        );
 
-      message.success({
-        content: "CSV file downloaded successfully!",
-        duration: 2,
-      });
-    } catch (error) {
-      if (error.response && error.response.status === 401) {
-        message.error({
-          content: "Session expired. Please log in again.",
-          duration: 4,
-        });
-        logout();
-      } else {
-        console.error("Download failed", error);
+        eventSource.onmessage = (event) => {
+          const data = JSON.parse(event.data);
+          if (data.type === "complete") {
+            if (data.status === "done" || data.status === "partial") {
+              setResult("done");
+              message.success({
+                content: "CSV processed successfully!",
+                duration: 2,
+              });
+            } else {
+              setResult("failed");
+              message.error({
+                content: data.error || "Something went wrong!",
+                duration: 4,
+              });
+            }
+            eventSource.close();
+          }
+          if (data.type === "init") {
+            if (data.status === "processing") {
+              setResult("pending");
+            }
+          }
+        };
+
+        eventSource.onerror = () => {
+          message.error({
+            content: "Facing some issue while fetching file status",
+            duration: 4,
+          });
+          setResult("fail");
+          eventSource.close();
+        };
+
+        return () => {
+          eventSource.close();
+        };
       }
+    };
+    setupEventSource();
+  }, [id, apiUrl]);
+
+  const onNextClick = () => {
+    if (file) {
+      handleUpload(file);
     }
+  };
+  const handleDownloadCSV = () => {
+    const link = document.createElement("a");
+    link.href = "/sample.csv";
+    link.setAttribute("download", "sample.csv");
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+
+    message.success({
+      content: "CSV file downloaded successfully!",
+      duration: 2,
+    });
   };
 
   const onDownloadSCV = async () => {
@@ -117,6 +165,56 @@ const StepContent: React.FC<StepContentProps> = ({
           duration: 4,
         });
       }
+    }
+  };
+
+  const handleUpload = async (file: File) => {
+    setUploading(true);
+    setUploadProgress(0);
+
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const response = await axios.post(`${apiUrl}/catchment/bulk`, formData, {
+        headers: {
+          "Content-Type": "multipart/form-data",
+          Authorization: `Bearer ${token}`,
+        },
+        onUploadProgress: (progressEvent) => {
+          const percent = Math.round(
+            (progressEvent.loaded * 100) / (progressEvent.total || 1)
+          );
+          setUploadProgress(percent);
+        },
+      });
+
+      if (response) {
+        message.success({
+          content: "File uploaded successfully!",
+          duration: 2,
+        });
+        const id = response?.data?.csv_id;
+        setId(id);
+        setResult("pending");
+        setCurrentStep(3);
+      }
+    } catch (error: any) {
+      setUploadProgress(0);
+      if (error.response?.status === 401) {
+        message.error({
+          content: "Session expired. Please log in again.",
+          duration: 4,
+        });
+        logout();
+      } else {
+        message.error({
+          content: error?.response?.data?.detail,
+          duration: 8,
+        });
+      }
+    } finally {
+      setUploading(false);
     }
   };
 
@@ -165,57 +263,8 @@ const StepContent: React.FC<StepContentProps> = ({
       }
 
       setFileList([file]);
-      // Simulate upload progress
-      setUploading(true);
-      setUploadProgress(0);
-
-      const formData = new FormData();
-
-      formData.append("file", file);
-      try {
-        const response = await axios.post(
-          `${apiUrl}/catchment/bulk`,
-          formData,
-          {
-            headers: {
-              "Content-Type": "multipart/form-data",
-              Authorization: `Bearer ${token}`,
-            },
-            onUploadProgress: (progressEvent) => {
-              const percent = Math.round(
-                (progressEvent.loaded * 100) / 1
-                // (progressEvent.loaded * 100) / (progressEvent.total || 1)
-              );
-              setUploadProgress(percent);
-            },
-          }
-        );
-
-        if (response) {
-          message.success({
-            content: "File uploaded successfully!",
-            duration: 2,
-          });
-          const id = response?.data?.csv_id;
-          setId(id);
-          setResult("pending");
-          setNext(true);
-        }
-      } catch (error: any) {
-        setUploadProgress(0);
-        if (error.response?.status === 401) {
-          message.error({
-            content: "Session expired. Please log in again.",
-            duration: 4,
-          });
-          logout();
-        } else {
-          message.error({
-            content: error?.response?.data?.detail,
-            duration: 8,
-          });
-        }
-      }
+      setFile(file);
+      setNext(true);
 
       return false; // prevent default upload
     },
@@ -223,71 +272,9 @@ const StepContent: React.FC<StepContentProps> = ({
       setUploadProgress(0);
       setUploading(false);
       setFileList([]);
+      setFile(null);
+      setNext(false);
     },
-  };
-
-  const test = async (id: string) => {
-    const fetchStatus = async () => {
-      try {
-        const response = await axios.get(
-          `${apiUrl}/catchment/csv-status/${id}`,
-          {
-            headers: {
-              Authorization: `Bearer ${token}`,
-            },
-          }
-        );
-        const status = response.data.status?.toLowerCase();
-
-        if (status === "done" || status === "complete") {
-          setResult("done");
-          clearInterval(interval);
-          message.success({
-            content: "CSV Processed successfully!",
-            duration: 2,
-          });
-        } else if (status === "failed" || status === "fail") {
-          clearInterval(interval);
-          if (response?.data?.error) {
-            message.error({
-              content: response?.data?.error,
-              duration: 8,
-            });
-          } else {
-            message.error({
-              content: "Something went wrong!",
-              duration: 2,
-            });
-          }
-
-          setResult("failed");
-        }
-      } catch (error) {
-        if (error.response && error.response.status === 401) {
-          message.error({
-            content: "Session expired. Please log in again.",
-            duration: 2,
-          });
-          logout();
-        } else {
-          message.error({
-            content: "Facing some issue while fetching file status",
-            duration: 4,
-          });
-          setResult("fail");
-          clearInterval(interval);
-        }
-      }
-    };
-
-    // Initial call
-    fetchStatus();
-
-    // Poll every 5 seconds
-    const interval = setInterval(fetchStatus, 5000);
-
-    // Cleanup on unmount
-    return () => clearInterval(interval);
   };
 
   const renderStepContent = () => {
@@ -489,7 +476,7 @@ const StepContent: React.FC<StepContentProps> = ({
           <StepCard title="Download CSV" extra={<UploadOutlined />}>
             {
               <>
-                {next ? (
+                {id ? (
                   <div className="flex items-baseline justify-between">
                     <Paragraph>
                       {result === "pending" ? (
@@ -505,7 +492,7 @@ const StepContent: React.FC<StepContentProps> = ({
                         "You can now download your CSV file by clicking the Download button."
                       )}
                     </Paragraph>
-                    {result !== "fail" && (
+                    {result === "done" && (
                       <Button
                         type="primary"
                         onClick={onDownloadSCV}

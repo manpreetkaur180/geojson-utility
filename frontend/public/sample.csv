@@ -1,0 +1,3 @@
+snp_id,provider_id,location_id,location_gps,drive_distance,drive_time
+sample_seller,sample_provider,L1,"28.5065162,77.073938",500.5,
+sample_seller,sample_provider,L2,"30.7135305,76.7454157",,20.5

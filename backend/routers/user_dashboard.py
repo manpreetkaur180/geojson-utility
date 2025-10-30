@@ -76,17 +76,24 @@ async def get_user_dashboard(
             "last_download": {
                 "filename": last_download.filename,
                 "downloaded_at": last_download.last_downloaded_at,
-                "download_count": last_download.download_count
+                "download_count": last_download.download_count,
+                "id":last_download.id
             } if last_download else None,
             "download_count": int(total_downloads),
             "recent_uploads": [
                 {
                     "filename": f.filename,
                     "created_at": f.created_at,
-                    "status": f.status
+                    "status": f.status,
+                    "id":f.id
                 } for f in recent_files
             ],
             "uploads_last_7days": recent_count,
             
         }
     }
+
+
+
+
+

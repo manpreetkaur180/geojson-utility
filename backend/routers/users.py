@@ -11,7 +11,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from typing import Optional
 from models.user import User
 import os
-
+from core.security import get_password_hash
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 @router.post("/register")
@@ -65,7 +65,9 @@ async def login(request: Request, db: Session = Depends(get_db)):
     user = db.query(User).filter(User.token == token).first()
     if not user:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
-    return {"username": user.username}
+    hashed_token = get_password_hash(token)
+    return {"username": user.username,"hashed_token": hashed_token}
+
 
 @router.get("/token-status")
 def get_user_token_status(current_user: dict = Depends(get_current_user), db: Session = Depends(get_db)):

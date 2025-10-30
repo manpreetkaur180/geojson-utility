@@ -1,13 +1,10 @@
 import React, { useEffect, useState } from "react";
+import { Layout, Steps, Button, Avatar, Dropdown, Space } from "antd";
 import {
-  Layout,
-  Steps,
-  Button,
-  Avatar,
-  Dropdown,
-  Space,
-} from "antd";
-import { UserOutlined, LogoutOutlined } from "@ant-design/icons";
+  UserOutlined,
+  LogoutOutlined,
+  DashboardOutlined,
+} from "@ant-design/icons";
 import type { MenuProps } from "antd";
 import { useAuth } from "../contexts/AuthContext";
 import LoginModal from "../components/LoginModal";
@@ -21,6 +18,7 @@ import {
   StepsContainer,
   LogoImage,
 } from "../components/StyledComponents";
+import { Link } from "react-router-dom";
 
 const { Step } = Steps;
 
@@ -56,6 +54,11 @@ const Index: React.FC = () => {
       label: user?.name || "Profile",
     },
     {
+      key: "dashboard",
+      icon: <DashboardOutlined />,
+      label: <Link to="/dashboard">Dashboard</Link>,
+    },
+    {
       key: "logout",
       icon: <LogoutOutlined />,
       label: "Logout",
@@ -64,7 +67,7 @@ const Index: React.FC = () => {
   ];
 
   const handleStepClick = (step: number) => {
-    setCurrentStep(step);
+    if (step < steps.length - 1) setCurrentStep(step);
   };
 
   const handleSignInClick = () => {

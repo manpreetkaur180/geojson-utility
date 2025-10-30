@@ -19,9 +19,13 @@ const LoginModal: React.FC<LoginModalProps> = ({ open, onCancel }) => {
     setLoading(true);
     localStorage.setItem("jwt_token", values.token);
     try {
-      const response = await axios.post(`${apiUrl}/auth/login`, {
-        token: values.token,
-      });
+      const response = await axios.post(
+        `${apiUrl}/auth/login`,
+        { token: values.token },
+        {
+          headers: { "Content-Type": "application/json" },
+        }
+      );
       if (response) {
         message.success("Login successful!");
 
@@ -33,6 +37,7 @@ const LoginModal: React.FC<LoginModalProps> = ({ open, onCancel }) => {
         onCancel();
         form.resetFields();
         setLoading(false);
+        window.location.reload();
       }
     } catch (err: any) {
       message.error(err.message || "Invalid credentials. Please try again.");

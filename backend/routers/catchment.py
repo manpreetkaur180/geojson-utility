@@ -23,6 +23,7 @@ from core.limiter import limiter
 from core.lepton_usage import LeptonTokenService
 import threading
 import re
+from core.security import verify_password
 
 load_dotenv()
 
@@ -509,16 +510,31 @@ def get_csv_status(csv_id: int, db: Session = Depends(get_db), current_user: dic
         response["error"] = csv_file.error
     logger.info(f"Status check for CSV id={csv_id}: {response}")
     return response
-
 @router.get("/csv-status-stream/{csv_id}")
-async def stream_csv_status(csv_id: int, request: Request, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+async def stream_csv_status(csv_id: int, request: Request, hashed_token: str, username: str, db: Session = Depends(get_db)):
     """Stream real-time CSV processing status via Server-Sent Events with PostgreSQL notifications"""
+    
+    # Authenticate user by checking the hashed_token
+    users = db.query(User).all()
+    authenticated_user = None
+    for user in users:
+        if user.token and verify_password(user.token, hashed_token):
+            authenticated_user = user
+            break
+    
+    if not authenticated_user:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+    # Verify that the provided username matches the authenticated user
+    if authenticated_user.username != username:
+        raise HTTPException(status_code=403, detail="Username does not match token owner")
+
     # Verify CSV exists and user has access
     csv_file = db.query(CSVFile).filter(CSVFile.id == csv_id).first()
     if not csv_file:
         raise HTTPException(status_code=404, detail="CSV file not found")
     
-    if csv_file.user_id != current_user.get('user_id'):
+    if csv_file.user_id != authenticated_user.id:
         raise HTTPException(status_code=403, detail="Access denied")
     
     # Subscribe to events for this CSV
@@ -601,6 +617,7 @@ async def stream_csv_status(csv_id: int, request: Request, db: Session = Depends
             "X-Accel-Buffering": "no"  # Disable nginx buffering
         }
     )
+
 
 @router.get("/csv/{csv_id}")
 def get_csv_file(csv_id: int, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

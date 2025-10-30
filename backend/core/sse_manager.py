@@ -28,24 +28,47 @@ class SSEEventManager:
     def _start_postgresql_listener(self):
         """Start PostgreSQL LISTEN connection in background thread"""
         try:
-            # Get database URL from environment
-            database_url = os.getenv('DATABASE_URL', 'postgresql://postgres:postgres@localhost:5432/mydb')
-            print(f"DEBUG: SSE Manager starting PostgreSQL listener with URL: {database_url}")
+            # Get database URL - use same logic as main app (db/session.py)
+            database_url = os.getenv('DATABASE_URL')
+            if not database_url:
+                # Build from individual env vars like main app does
+                db_username = os.getenv("DB_USERNAME", "postgres")
+                db_password = os.getenv("DB_PASSWORD", "postgres") 
+                db_host = os.getenv("DB_HOST", "localhost")
+                db_port = os.getenv("DB_PORT", "5432")
+                db_name = os.getenv("DB_NAME", "mydb")
+                database_url = f"postgresql://{db_username}:{db_password}@{db_host}:{db_port}/{db_name}"
+            
+            print(f"DEBUG: SSE Manager starting PostgreSQL listener")
+            print(f"DEBUG: DB_HOST={os.getenv('DB_HOST')}, DB_USERNAME={os.getenv('DB_USERNAME')}")
+            print(f"DEBUG: Constructed DATABASE_URL: {database_url}")
             logger.info(f"SSE Manager starting PostgreSQL listener with URL: {database_url}")
+            logger.info(f"Environment: DB_HOST={os.getenv('DB_HOST')}, DB_USERNAME={os.getenv('DB_USERNAME')}")
             
             def postgresql_listener():
                 """Background thread that listens for PostgreSQL notifications"""
                 try:
                     # Connect to PostgreSQL
-                    print(f"DEBUG: Connecting to PostgreSQL: {database_url}")
+                    print("DEBUG: Attempting PostgreSQL connection...")
                     conn = psycopg2.connect(database_url)
                     conn.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
                     cursor = conn.cursor()
                     
+                    # Test connection and verify database
+                    cursor.execute("SELECT current_database(), current_user, version();")
+                    db_info = cursor.fetchone()
+                    print(f"DEBUG: Connected to database: {db_info[0]}, user: {db_info[1]}")
+                    logger.info(f"PostgreSQL connection established - Database: {db_info[0]}, User: {db_info[1]}")
+                    
                     # Start listening to csv_status_change channel
                     cursor.execute("LISTEN csv_status_change;")
-                    print("DEBUG: PostgreSQL LISTEN connection established for csv_status_change")
+                    print("DEBUG: PostgreSQL LISTEN command executed successfully")
                     logger.info("PostgreSQL LISTEN connection established for csv_status_change")
+                    
+                    # Test that we can receive notifications by sending a test one
+                    test_payload = '{"test": "sse_manager_connection_test", "timestamp": "' + datetime.now().isoformat() + '"}'
+                    cursor.execute("SELECT pg_notify('csv_status_change', %s);", (test_payload,))
+                    print("DEBUG: Sent test notification to verify LISTEN works")
                     
                     self._pg_connection = conn
                     
@@ -57,11 +80,14 @@ class SSEEventManager:
                         conn.poll()
                         while conn.notifies:
                             notify = conn.notifies.pop(0)
+                            print(f"DEBUG: Received PostgreSQL notification: {notify.payload}")
+                            logger.info(f"PostgreSQL notification received: {notify.payload}")
                             try:
                                 # Handle the notification asynchronously
                                 self._handle_pg_notification(notify.payload)
                             except Exception as e:
                                 logger.error(f"Error handling PostgreSQL notification: {e}")
+                                print(f"DEBUG: Error handling notification: {e}")
                                 
                 except Exception as e:
                     logger.error(f"PostgreSQL listener error: {e}")

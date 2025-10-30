@@ -22,6 +22,8 @@ from fastapi.responses import JSONResponse
 from core.limiter import limiter
 from routers import user_dashboard
 
+
+
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request, call_next):
         response = await call_next(request)
