@@ -253,34 +253,53 @@ async def bulk_process_catchments(request: Request, file: UploadFile = File(...)
                     
                     geojson_str = '{}'
                     if not row_errors and lat is not None and lon is not None:
-                        # Step 1: Check if user has tokens available (non-consuming check)
                         if not LeptonTokenService.check_user_has_tokens(user_id, thread_session):
                             row_errors.append("Your token allocation has been exhausted")
                         else:
                             try:
-                                # Step 2: Make Lepton API call
-                                client = LeptonMapsClient(api_key=api_key)
-                                api_call_made = True
-                                if use_drive_distance and drive_distance_val is not None:
-                                    geojson = client.get_catchment_geojson(latitude=lat, longitude=lon, catchment_type='DRIVE_DISTANCE', drive_distance=drive_distance_val)
-                                elif drive_time_val is not None:
-                                    geojson = client.get_catchment_geojson(latitude=lat, longitude=lon, catchment_type='DRIVE_TIME', drive_time=drive_time_val)
+                                # Check for mock mode
+                                if os.environ.get("MOCK_MODE") == "true":
+                                    mock_geojson = {
+                                        "type": "FeatureCollection",
+                                        "features": [{
+                                            "type": "Feature",
+                                            "geometry": {
+                                                "type": "Polygon",
+                                                "coordinates": [[
+                                                    [lon - 0.01, lat - 0.01],
+                                                    [lon + 0.01, lat - 0.01],
+                                                    [lon + 0.01, lat + 0.01],
+                                                    [lon - 0.01, lat + 0.01],
+                                                    [lon - 0.01, lat - 0.01]
+                                                ]]
+                                            },
+                                            "properties": {}
+                                        }]
+                                    }
+                                    geojson_str = json.dumps(mock_geojson)
+                                    api_call_made = False # No real API call
                                 else:
-                                    row_errors.append("Either drive_distance or drive_time must be provided and valid.")
-                                    return idx, geojson_str, row_errors, False
-                                    
-                                # Step 3: API call succeeded - now consume token
-                                if LeptonTokenService.consume_token_after_success(user_id, thread_session):
-                                    polygon_geojson = client.extract_polygon_geojson(geojson)
-                                    geojson_str = json.dumps(polygon_geojson)
-                                else:
-                                    # Race condition: tokens exhausted between check and consumption
-                                    row_errors.append("Your token allocation has been exhausted")
-                                    
+                                    # Step 2: Make Lepton API call
+                                    client = LeptonMapsClient(api_key=api_key)
+                                    api_call_made = True
+                                    if use_drive_distance and drive_distance_val is not None:
+                                       geojson = client.get_catchment_geojson(latitude=lat, longitude=lon, catchment_type='DRIVE_DISTANCE', drive_distance=drive_distance_val)
+                                    elif drive_time_val is not None:
+                                       geojson = client.get_catchment_geojson(latitude=lat, longitude=lon, catchment_type='DRIVE_TIME', drive_time=drive_time_val)
+                                    else:
+                                       row_errors.append("Either drive_distance or drive_time must be provided and valid.")
+                                       return idx, geojson_str, row_errors, False
+
+                                    # Step 3: API call succeeded - now consume token
+                                    if LeptonTokenService.consume_token_after_success(user_id, thread_session):
+                                           polygon_geojson = client.extract_polygon_geojson(geojson)
+                                           geojson_str = json.dumps(polygon_geojson)
+                                    else:
+                                        # Race condition: tokens exhausted between check and consumption
+                                        row_errors.append("Your token allocation has been exhausted")
                             except Exception as e:
                                 # Step 4: API call failed - don't consume token
                                 logger.error(f"GeoJSON error for row {idx+1}: {str(e)}")
-                                
                                 # Distinguish between different error types
                                 error_str = str(e)
                                 if "HTTP 402" in error_str or "Not enough credits" in error_str:

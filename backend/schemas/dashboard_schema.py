@@ -23,4 +23,3 @@ class FileStats(BaseModel):
 class DashboardResponse(BaseModel):
     username: str
     file_stats: FileStats
-
